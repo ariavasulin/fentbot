@@ -2,11 +2,23 @@
 
 ## Overview
 
-Train two position-conditioned ACT policies for SO-101 to perform poker chip manipulation:
+Train two ACT policies for SO-101 to perform **vertical-only** chip manipulation:
 - **`pick_chip`**: Descend to chip stack, grab top chip, lift to safe height
-- **`drop_chip`**: Descend to target position, release chip, lift to safe height
+- **`drop_chip`**: Descend to target, release chip, lift to safe height
 
-These are low-level manipulation primitives. A higher-level system (out of scope) will call these with grid coordinates.
+These primitives are **position-agnostic** - they only handle vertical motion. Horizontal positioning is handled by a separate hardcoded grid navigation system.
+
+### System Architecture
+
+```
+move_chip(from_xy, to_xy):
+    1. [HARDCODED] Move arm to from_xy at safe height (grid calibration lookup)
+    2. [LEARNED]   pick_chip(): descend → grab → lift (variable stack height)
+    3. [HARDCODED] Move arm to to_xy at safe height (grid calibration lookup)
+    4. [LEARNED]   drop_chip(): descend → release → lift (variable stack height)
+```
+
+**Key insight**: The learned policies only see "I'm above a stack, go down and grab/release." They don't know or care WHERE on the grid they are. Train once at any fixed position, deploy everywhere via hardcoded horizontal movement.
 
 ## Out of Scope
 
@@ -14,6 +26,7 @@ These are low-level manipulation primitives. A higher-level system (out of scope
 - Game logic and decision making
 - Strategy or move planning
 - Multi-chip manipulation in single action
+- Horizontal movement (handled by grid calibration, not learning)
 
 ---
 
@@ -26,9 +39,9 @@ These are low-level manipulation primitives. A higher-level system (out of scope
 | 1 | Which edge is robot mounted on? | Short (24") or long (36") side |
 | 2 | What is the usable working zone? | Limited by ~12-14" SO-101 reach. Suggest 8x8 or 10x10 grid subset |
 | 3 | Chip thickness? | Needed for stack height calculations (standard poker chip ~3.3mm) |
-| 4 | Chip source location? | Where relative to grid? Adjacent corner? |
-| 5 | Camera count and positions? | Recommend: 1-2 cameras (front + top or wrist) |
-| 6 | Gripper opening for chip? | Need to measure chip diameter (~39mm for standard) |
+| 4 | Camera count and positions? | Recommend: 1-2 cameras (front + top or wrist) |
+| 5 | Gripper opening for chip? | Need to measure chip diameter (~39mm for standard) |
+| 6 | Training position? | Which grid position to use for demonstration recording? |
 
 ---
 
@@ -38,17 +51,17 @@ These are low-level manipulation primitives. A higher-level system (out of scope
 
 ```
 +------------------+
-|                  |
+|      [Pot]       |    <- Example: pot at some grid position
 |   23 x 35 grid   |    <- 24" x 36" paper, 1/2" borders, 1" spacing
 |   (1" squares)   |
-|                  |
+|  [CHIP SOURCE]   |    <- Example: player's chips at another position
 +------------------+
         ^
         |
     [SO-101 ARM]   <- Mounted at edge
-        |
-   [CHIP SOURCE]   <- Dedicated pickup location
 ```
+
+Both pot and chip source are just grid positions - the system can move chips between ANY two grid positions.
 
 ### Equipment Required
 
@@ -66,47 +79,109 @@ These are low-level manipulation primitives. A higher-level system (out of scope
 ### 1.1 LeRobot Installation
 
 ```bash
-# Create virtual environment
-python3 -m venv .venv
+# Install uv if not already installed
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Create virtual environment with Python 3.10
+uv venv --python 3.10
 source .venv/bin/activate
 
 # Install LeRobot with Feetech support
-pip install lerobot[feetech]
+uv pip install 'lerobot[feetech]'
+
+# Install FFmpeg (required for video encoding)
+# macOS:
+brew install ffmpeg
+# Linux:
+sudo apt-get install ffmpeg
 
 # Verify installation
 python -c "import lerobot; print(lerobot.__version__)"
 ```
 
+**Alternative: Install from source (recommended for development)**
+```bash
+git clone https://github.com/huggingface/lerobot.git
+cd lerobot
+uv pip install -e ".[feetech]"
+```
+
 ### 1.2 Hardware Connection
 
 ```bash
-# Find USB ports
-ls /dev/ttyACM* /dev/ttyUSB*
+# Find USB ports (cross-platform)
+lerobot-find-port
+
+# Or manually check:
+# Linux: ls /dev/ttyACM* /dev/ttyUSB*
+# macOS: ls /dev/tty.usbmodem*
+# Windows: Check Device Manager for COM ports
 
 # Expected: two ports (leader + follower)
-# e.g., /dev/ttyACM0 (leader), /dev/ttyACM1 (follower)
+# e.g., /dev/ttyACM0 (follower), /dev/ttyACM1 (leader)
+
+# Linux: Grant permissions
+sudo chmod 666 /dev/ttyACM0
+sudo chmod 666 /dev/ttyACM1
+# Or add user to dialout group permanently:
+sudo usermod -a -G dialout $USER
 ```
 
-### 1.3 Arm Calibration
+### 1.3 Motor Setup (First Time Only)
+
+Set motor IDs and baudrates. Connect ONE motor at a time:
+
+```bash
+# Setup follower arm motors
+lerobot-setup-motors \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0
+
+# Setup leader arm motors
+lerobot-setup-motors \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/ttyACM1
+```
+
+### 1.4 Arm Calibration
 
 Run LeRobot's built-in calibration for both arms:
 
 ```bash
 # Calibrate follower arm
-python -m lerobot.scripts.control_robot calibrate \
-    --robot-path lerobot/configs/robot/so100.yaml \
-    --robot-overrides '~cameras' --arms follower
+lerobot-calibrate \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.id=follower
 
 # Calibrate leader arm
-python -m lerobot.scripts.control_robot calibrate \
-    --robot-path lerobot/configs/robot/so100.yaml \
-    --robot-overrides '~cameras' --arms leader
+lerobot-calibrate \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/ttyACM1 \
+    --teleop.id=leader
+```
+
+Calibration files saved to: `~/.cache/huggingface/lerobot/calibration/`
+
+### 1.5 Test Teleoperation
+
+Verify leader-follower mirroring works:
+
+```bash
+lerobot-teleoperate \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.id=follower \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/ttyACM1 \
+    --teleop.id=leader
 ```
 
 ### Success Criteria
 
-- [ ] LeRobot installed and importable
-- [ ] Both arms detected on USB ports
+- [ ] LeRobot installed and importable (`python -c "import lerobot"`)
+- [ ] Both arms detected via `lerobot-find-port`
+- [ ] Motor setup complete (IDs and baudrates configured)
 - [ ] Calibration files saved to `~/.cache/huggingface/lerobot/calibration/`
 - [ ] Teleoperation works: leader arm mirrors to follower
 
@@ -114,22 +189,27 @@ python -m lerobot.scripts.control_robot calibrate \
 
 ## Phase 2: Grid Calibration System
 
-### 2.1 Concept
+### 2.1 Purpose
 
-Create a mapping from grid coordinates (row, col) to robot joint positions at safe height (10").
+Create a mapping from grid coordinates (row, col) to robot joint positions at safe height (10"). This enables **hardcoded horizontal navigation** between any two grid positions.
 
-**Approach**: 4-corner manual calibration + bilinear interpolation
+**Note**: This is NOT used as policy input. Policies are position-agnostic.
+
+### 2.2 Approach
+
+**4-corner manual calibration + bilinear interpolation**
 
 ```
-Corner positions to record:
+Corner positions to record (at safe height):
 (0,0) -------- (0, max_col)
   |                |
-  |    GRID        |
+  |    WORKING     |
+  |     ZONE       |
   |                |
 (max_row, 0) -- (max_row, max_col)
 ```
 
-### 2.2 Calibration Script Specification
+### 2.3 Calibration Script Specification
 
 **File**: `scripts/calibrate_grid.py`
 
@@ -141,7 +221,7 @@ Corner positions to record:
 1. Prompt user to move arm (via teleoperation) to corner (0,0) at safe height
 2. Press key to record joint positions
 3. Repeat for remaining 3 corners
-4. Compute interpolated positions for all grid cells
+4. Compute interpolated positions for all grid cells using bilinear interpolation
 5. Save calibration file
 
 **Output**: `config/grid_calibration.json`
@@ -161,40 +241,54 @@ Corner positions to record:
     }
   },
   "positions": {
-    "0,0": {"safe": [j1, j2, j3, j4, j5, j6]},
-    "0,1": {"safe": [...]},
+    "0,0": [j1, j2, j3, j4, j5, j6],
+    "0,1": [...],
     ...
   }
 }
 ```
 
-### 2.3 Chip Source Calibration
+### 2.4 Grid Navigation Function
 
-**Additional calibration point**: The chip source location (off-grid).
+**File**: `scripts/grid_nav.py`
 
-Add to calibration script:
-1. Move arm to chip source at safe height → record
-2. Move arm to chip source at pickup height (stack of 10) → record
-3. Save as special position in calibration file
+```python
+def move_to_grid_position(robot, calibration, row, col):
+    """Move arm to (row, col) at safe height using calibrated joint positions."""
+    target_joints = calibration["positions"][f"{row},{col}"]
+    robot.move_to(target_joints)
+```
 
-### 2.4 Verification Script
+This is simple joint-space interpolation - no learning required.
+
+### 2.5 Verification Script
 
 **File**: `scripts/verify_grid.py`
 
-Move arm to each calibrated position sequentially to visually verify accuracy.
+Move arm sequentially to a sample of grid positions (e.g., corners + center + random) to visually verify accuracy.
 
 ### Success Criteria
 
-- [ ] Calibration script records 4 corners + chip source
+- [ ] Calibration script records 4 corners
 - [ ] Interpolated positions computed for full grid
 - [ ] Verification shows arm reaches all positions accurately (within ~5mm)
 - [ ] Calibration file saved and loadable
+- [ ] `move_to_grid_position()` function works
 
 ---
 
 ## Phase 3: Data Collection
 
-### 3.1 Dataset Structure
+### 3.1 Key Insight: Position-Agnostic Training
+
+Since policies only handle **vertical motion**, we train at a **single fixed grid position**. The policy learns:
+- How to descend based on visual observation of stack height
+- When to close/open gripper
+- How to lift back to safe height
+
+This generalizes to all grid positions because vertical motion is the same everywhere.
+
+### 3.2 Dataset Structure
 
 Two separate datasets:
 
@@ -202,10 +296,10 @@ Two separate datasets:
 data/
 ├── pick_chip/
 │   ├── episode_0/
-│   │   ├── observation.images.front/  # or however LeRobot structures it
+│   │   ├── observation.images.front/
 │   │   ├── observation.state/
 │   │   ├── action/
-│   │   └── metadata.json  # {grid_pos: [r,c], stack_height: N}
+│   │   └── metadata.json  # {stack_height: N}
 │   ├── episode_1/
 │   └── ...
 └── drop_chip/
@@ -213,56 +307,88 @@ data/
     └── ...
 ```
 
-### 3.2 Recording Script Specification
+**Note**: No grid position in metadata - policies are position-agnostic.
 
-**File**: `scripts/record_demonstrations.py`
+### 3.3 Recording with LeRobot CLI
 
-**Arguments**:
-- `--primitive`: `pick_chip` or `drop_chip`
-- `--num-episodes`: Target episode count
-- `--grid-calibration`: Path to calibration file
+**Basic recording command:**
+
+```bash
+# Record pick_chip demonstrations
+lerobot-record \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.id=follower \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/ttyACM1 \
+    --teleop.id=leader \
+    --dataset.repo_id=${HF_USER}/pick_chip \
+    --dataset.num_episodes=50 \
+    --dataset.single_task="Pick up top chip from stack" \
+    --display_data=true
+
+# Record drop_chip demonstrations
+lerobot-record \
+    --robot.type=so101_follower \
+    --robot.port=/dev/ttyACM0 \
+    --robot.id=follower \
+    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
+    --teleop.type=so101_leader \
+    --teleop.port=/dev/ttyACM1 \
+    --teleop.id=leader \
+    --dataset.repo_id=${HF_USER}/drop_chip \
+    --dataset.num_episodes=50 \
+    --dataset.single_task="Drop chip onto stack" \
+    --display_data=true
+```
+
+**Find available cameras:**
+```bash
+lerobot-find-cameras opencv
+```
+
+### 3.4 Recording Process
 
 **Process for `pick_chip`**:
-1. System selects random grid position and stack height (1-10)
-2. Display target to operator: "Pick chip from (3, 5), stack height: 4"
-3. Human manually sets up chips at that position with correct height
-4. System moves arm to chip source (or starting position)
-5. Start recording
-6. Operator teleoperates: descend → grab → lift to safe height
-7. Stop recording
-8. Save episode with metadata
-9. Repeat
+1. Position arm at training location at safe height (manually before starting)
+2. Set up stack of N chips (vary height 1-10 across episodes)
+3. Start recording (press Enter)
+4. Teleoperate: descend → grab → lift to safe height
+5. Stop recording (press Enter or 's')
+6. Repeat with different stack heights
 
 **Process for `drop_chip`**:
-1. System selects random grid position
-2. Display target: "Drop chip at (2, 7)"
-3. Operator starts with chip in gripper at safe height
-4. Start recording
-5. Operator teleoperates: move to position → descend → release → lift
-6. Stop recording
-7. Save episode with metadata
-8. Repeat
+1. Start with chip in gripper at safe height above target
+2. Set up existing stack of N chips at target (vary 0-9 across episodes)
+3. Start recording
+4. Teleoperate: descend → release → lift to safe height
+5. Stop recording
+6. Repeat
 
-### 3.3 Data Augmentation Considerations
+### 3.5 Training Variables
 
-Position conditioning requires diverse training positions. Ensure:
-- Minimum 10-20 unique grid positions sampled
-- Uniform distribution across the working zone
-- Stack heights uniformly distributed 1-10
+| Variable | Range | Purpose |
+|----------|-------|---------|
+| Stack height (pick) | 1-10 chips | Policy learns to descend appropriate amount |
+| Stack height (drop) | 0-9 chips | Policy learns to descend to existing stack |
+| Natural jitter | N/A | Human demonstrations naturally vary |
 
-### 3.4 Demonstration Count Targets
+### 3.6 Demonstration Count Targets
 
 | Primitive | Target Episodes | Notes |
 |-----------|-----------------|-------|
-| `pick_chip` | 50-100 | Vary position (10+) and height (1-10) |
-| `drop_chip` | 50-100 | Vary target position (10+) |
+| `pick_chip` | 50-100 | Uniform distribution across stack heights 1-10 |
+| `drop_chip` | 50-100 | Uniform distribution across stack heights 0-9 |
+
+~5-10 demos per stack height should be sufficient.
 
 ### Success Criteria
 
 - [ ] Recording script functional
-- [ ] Episodes include correct metadata (grid position, stack height)
+- [ ] Episodes include stack height metadata
 - [ ] At least 50 episodes per primitive
-- [ ] Diverse positions and stack heights represented
+- [ ] Uniform distribution across stack heights
 - [ ] Data format compatible with LeRobot training
 
 ---
@@ -292,52 +418,54 @@ training:
   learning_rate: 1e-5
   num_epochs: 2000
 
-# Position conditioning - add to observation space
 observation:
-  images: [front_camera]  # Camera input(s)
+  images: [front_camera]  # Camera input(s) - TBD based on setup
   state: [joint_positions, gripper_position]
-  context: [target_row_normalized, target_col_normalized]  # 0-1 floats
+  # NO position conditioning - policies are position-agnostic
 ```
 
-### 4.2 Position Conditioning Implementation
-
-Modify observation to include normalized grid coordinates:
-
-```python
-# During data collection, add to each timestep:
-observation["target_position"] = [
-    row / max_rows,  # Normalized to [0, 1]
-    col / max_cols
-]
-```
-
-This allows the policy to generalize: same weights, different target positions.
-
-### 4.3 Training Commands
+### 4.2 Training Commands
 
 ```bash
 # Train pick_chip policy
-python -m lerobot.scripts.train \
-    --dataset-repo-id local:data/pick_chip \
-    --policy-name act \
-    --output-dir outputs/pick_chip \
-    --config-path configs/pick_chip_act.yaml
+lerobot-train \
+    --dataset.repo_id=${HF_USER}/pick_chip \
+    --policy.type=act \
+    --output_dir=outputs/train/pick_chip \
+    --job_name=pick_chip \
+    --policy.device=cuda
 
 # Train drop_chip policy
-python -m lerobot.scripts.train \
-    --dataset-repo-id local:data/drop_chip \
-    --policy-name act \
-    --output-dir outputs/drop_chip \
-    --config-path configs/drop_chip_act.yaml
+lerobot-train \
+    --dataset.repo_id=${HF_USER}/drop_chip \
+    --policy.type=act \
+    --output_dir=outputs/train/drop_chip \
+    --job_name=drop_chip \
+    --policy.device=cuda
 ```
 
-### 4.4 Training Monitoring
+**For Apple Silicon (M1/M2/M3):**
+```bash
+lerobot-train \
+    --dataset.repo_id=${HF_USER}/pick_chip \
+    --policy.type=act \
+    --output_dir=outputs/train/pick_chip \
+    --policy.device=mps
+```
+
+### 4.3 Training Monitoring
 
 Use Weights & Biases (optional but recommended):
 
 ```bash
 wandb login
-# Add --wandb flag to training command
+
+# Add wandb flag to training command
+lerobot-train \
+    --dataset.repo_id=${HF_USER}/pick_chip \
+    --policy.type=act \
+    --output_dir=outputs/train/pick_chip \
+    --wandb.enable=true
 ```
 
 Monitor for:
@@ -345,68 +473,111 @@ Monitor for:
 - Action prediction accuracy
 - Overfitting (train vs. validation loss)
 
+### 4.4 Checkpoints and Resuming
+
+Checkpoints saved to: `outputs/train/<job_name>/checkpoints/`
+
+```bash
+# Resume from checkpoint
+lerobot-train \
+    --config_path=outputs/train/pick_chip/checkpoints/last/pretrained_model/train_config.json \
+    --resume=true
+
+# Upload trained model to Hub
+huggingface-cli upload ${HF_USER}/pick_chip_policy \
+    outputs/train/pick_chip/checkpoints/last/pretrained_model
+```
+
 ### Success Criteria
 
-- [ ] Training configs created for both primitives
-- [ ] Position conditioning integrated into observation space
 - [ ] Training completes without errors
 - [ ] Loss converges (final loss < initial loss by 10x+)
-- [ ] Model checkpoints saved
+- [ ] Model checkpoints saved to `outputs/train/`
+- [ ] Models uploaded to HuggingFace Hub
 
 ---
 
-## Phase 5: Policy Evaluation & Deployment
+## Phase 5: Integration & Deployment
 
-### 5.1 Inference Script Specification
+### 5.1 The `move_chip` Function
+
+**File**: `scripts/move_chip.py`
+
+This is the main orchestration function that combines hardcoded navigation with learned primitives:
+
+```python
+def move_chip(robot, grid_calibration, pick_policy, drop_policy, from_pos, to_pos):
+    """
+    Move a chip from from_pos to to_pos.
+
+    Args:
+        robot: LeRobot robot instance
+        grid_calibration: Loaded calibration data
+        pick_policy: Trained pick_chip ACT policy
+        drop_policy: Trained drop_chip ACT policy
+        from_pos: (row, col) tuple - source position
+        to_pos: (row, col) tuple - destination position
+    """
+    # Step 1: Move to source position (HARDCODED)
+    move_to_grid_position(robot, grid_calibration, from_pos[0], from_pos[1])
+
+    # Step 2: Pick chip (LEARNED)
+    run_policy(robot, pick_policy, termination="gripper_closed_and_lifted")
+
+    # Step 3: Move to destination position (HARDCODED)
+    move_to_grid_position(robot, grid_calibration, to_pos[0], to_pos[1])
+
+    # Step 4: Drop chip (LEARNED)
+    run_policy(robot, drop_policy, termination="gripper_open_and_lifted")
+```
+
+### 5.2 Policy Inference
 
 **File**: `scripts/run_policy.py`
 
-**Arguments**:
-- `--primitive`: `pick_chip` or `drop_chip`
-- `--checkpoint`: Path to trained model
-- `--grid-position`: Target position as "row,col"
-- `--stack-height`: (for pick_chip) Expected stack height
+```python
+def run_policy(robot, policy, termination):
+    """
+    Run a learned policy until termination condition.
 
-**Process**:
-1. Load policy checkpoint
-2. Load grid calibration
-3. Set target position in observation
-4. Run inference loop:
-   - Get camera observation
-   - Get robot state
-   - Add target position to observation
-   - Policy predicts action chunk
-   - Execute actions on robot
-   - Repeat until termination condition
+    Termination conditions:
+    - "gripper_closed_and_lifted": Gripper closed AND z at safe height
+    - "gripper_open_and_lifted": Gripper open AND z at safe height
+    - Timeout (5 seconds fallback)
+    """
+    while not check_termination(robot, termination):
+        observation = get_observation(robot)  # camera + joint state
+        action = policy.predict(observation)
+        robot.execute(action)
+```
 
-### 5.2 Termination Conditions
+### 5.3 Termination Conditions
 
-**pick_chip**:
-- Gripper closed AND z-position at safe height
-- OR timeout (5 seconds)
+| Primitive | Condition |
+|-----------|-----------|
+| `pick_chip` | Gripper closed AND z-position at safe height |
+| `drop_chip` | Gripper open AND z-position at safe height |
+| Both | Timeout after 5 seconds (fallback) |
 
-**drop_chip**:
-- Gripper open AND z-position at safe height
-- OR timeout (5 seconds)
+### 5.4 Evaluation Protocol
 
-### 5.3 Evaluation Protocol
+Test the full `move_chip` function:
 
-Test each policy on:
-- 5 seen positions (from training data)
-- 5 unseen positions (interpolated, not in training)
-- 3 stack heights (low: 2, medium: 5, high: 9)
+1. **Same position as training**: 10 trials moving chips between training position and another
+2. **Different positions**: 10 trials at positions NOT used during training
+3. **Various stack heights**: Test with 2, 5, and 9 chip stacks
 
 **Metrics**:
-- Success rate (chip picked/placed correctly)
-- Position accuracy (distance from target)
+- Success rate (chip successfully moved)
 - Completion time
+- Any dropped chips or misses
 
 ### Success Criteria
 
-- [ ] Inference script runs trained policies
-- [ ] Pick success rate > 80% on seen positions
-- [ ] Drop success rate > 80% on seen positions
-- [ ] Generalization to unseen positions works (> 60% success)
+- [ ] `move_chip()` function works end-to-end
+- [ ] Pick success rate > 80%
+- [ ] Drop success rate > 80%
+- [ ] Policies generalize to unseen grid positions (same success rate)
 
 ---
 
@@ -420,13 +591,15 @@ fentbot/
 │   ├── VLA_MODELS.md
 │   └── CHIP_MANIPULATION_PLAN.md  # This document
 ├── scripts/
-│   ├── calibrate_grid.py          # Phase 2
-│   ├── verify_grid.py             # Phase 2
-│   ├── record_demonstrations.py   # Phase 3
-│   └── run_policy.py              # Phase 5
+│   ├── calibrate_grid.py          # Phase 2: Grid calibration
+│   ├── grid_nav.py                # Phase 2: Hardcoded navigation
+│   ├── verify_grid.py             # Phase 2: Verification
+│   ├── record_demonstrations.py   # Phase 3: Data collection
+│   ├── run_policy.py              # Phase 5: Policy inference
+│   └── move_chip.py               # Phase 5: Main orchestration
 ├── configs/
-│   ├── pick_chip_act.yaml         # Phase 4
-│   └── drop_chip_act.yaml         # Phase 4
+│   ├── pick_chip_act.yaml         # Phase 4: Training config
+│   └── drop_chip_act.yaml         # Phase 4: Training config
 ├── config/
 │   └── grid_calibration.json      # Generated by calibration
 ├── data/
@@ -442,17 +615,23 @@ fentbot/
 ## Implementation Order
 
 1. **Phase 1**: Environment setup (LeRobot install, arm calibration)
-2. **Phase 2**: Grid calibration system
-3. **Phase 3**: Data collection (50+ demos per primitive)
-4. **Phase 4**: Policy training
-5. **Phase 5**: Evaluation and deployment
+2. **Phase 2**: Grid calibration system (calibrate, verify, navigate)
+3. **Phase 3**: Data collection (50+ demos per primitive at ONE position)
+4. **Phase 4**: Policy training (ACT, ~2 hours each)
+5. **Phase 5**: Integration and deployment (move_chip function)
 
-**Estimated time** (hackathon pace):
-- Phase 1: 30 min
-- Phase 2: 1-2 hours
-- Phase 3: 2-4 hours (depends on demo count)
-- Phase 4: 1-2 hours (training time)
-- Phase 5: 1 hour
+---
+
+## Summary: What's Learned vs. Hardcoded
+
+| Component | Type | Description |
+|-----------|------|-------------|
+| Horizontal navigation | **Hardcoded** | Move arm to any (x,y) via grid calibration |
+| `pick_chip` | **Learned** | Vertical: descend, grab, lift |
+| `drop_chip` | **Learned** | Vertical: descend, release, lift |
+| `move_chip` | **Orchestration** | Combines hardcoded + learned |
+
+The policies are trained once at a single position and generalize everywhere because they only learn vertical motion, which is position-independent.
 
 ---
 
