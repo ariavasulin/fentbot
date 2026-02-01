@@ -1,0 +1,5 @@
+opencv-python>=4.8.0
+pydantic>=2.0.0
+openai>=1.0.0
+fish-audio-sdk[utils]>=0.1.0
+python-dotenv>=1.0.0
