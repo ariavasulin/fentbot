@@ -112,3 +112,22 @@ class ActionOutput(BaseModel):
     action: Action
     confidence: float
     commentary: str
+
+
+class ChipColor(str, Enum):
+    YELLOW = "yellow"
+    GREEN = "green"
+    PINK = "pink"
+    RED = "red"
+
+
+class ChipPosition(str, Enum):
+    LEFT = "left"
+    CENTER = "center"
+    RIGHT = "right"
+
+
+class Chip(BaseModel):
+    """Observed chip on the table with spatial info"""
+    color: ChipColor
+    position: ChipPosition

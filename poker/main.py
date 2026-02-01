@@ -2,10 +2,11 @@ import json
 import time
 from datetime import datetime
 
-from poker.agent import get_peter_decision, get_reaction
+from poker.agent import generate_command, get_peter_decision, get_reaction
 from poker.config import CAMERA_INDEX, FRAME_INTERVAL
 from poker.models import ActionOutput, GamePhase, GameState, Hand
 from poker.vision import TableReading, capture_frame, read_cards
+from poker.robot import Robot
 from poker.voice import speak, speak_async
 
 
@@ -41,9 +42,15 @@ def run():
     last_reading: TableReading | None = None
     game_state = GameState()
     last_decision_made = False
+    robot = Robot()
 
     while True:
         try:
+            # Wait for robot command to complete
+            if robot.command_in_progress():
+                time.sleep(FRAME_INTERVAL)
+                continue
+
             # Capture and analyze
             frame = capture_frame(CAMERA_INDEX)
             reading = read_cards(frame)
@@ -88,6 +95,12 @@ def run():
 
                         # Speak the commentary
                         speak(response.commentary)
+
+                        # Generate and execute a chip placement command (single chip)
+                        command = generate_command(reading, response.action)
+                        if command and not robot.command_in_progress():
+                            print(f"ROBOT COMMAND: {command}")
+                            robot.execute_command(command)
 
                         game_state.last_action = response.action
                         last_decision_made = True
