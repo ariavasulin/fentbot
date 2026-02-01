@@ -1,6 +1,13 @@
 from poker.models import Hand, Action, Rank
 
 
+def simplify_action(action: Action) -> Action:
+    """Convert DOUBLE/SPLIT to HIT (we only support HIT/STAND for the demo)."""
+    if action in (Action.DOUBLE, Action.SPLIT):
+        return Action.HIT
+    return action
+
+
 def get_dealer_upcard_value(dealer_hand: Hand) -> int:
     """Get value of dealer's visible card"""
     if not dealer_hand.cards:

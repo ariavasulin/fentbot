@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from poker.models import Action, Chip, ChipColor, GameState
 from poker.prompts import PETER_SYSTEM_PROMPT, format_game_state
-from poker.strategy import basic_strategy, get_dealer_upcard_value
+from poker.strategy import basic_strategy, get_dealer_upcard_value, simplify_action
 
 if TYPE_CHECKING:
     from poker.vision import TableReading
@@ -30,9 +30,9 @@ def get_peter_decision(game_state: GameState) -> PeterResponse:
     Get Peter's decision and commentary for current game state.
     Uses basic strategy for the decision, LLM for the personality.
     """
-    # Get the correct action from basic strategy
+    # Get the correct action from basic strategy (simplified to HIT/STAND only)
     dealer_upcard = get_dealer_upcard_value(game_state.dealer_hand)
-    correct_action = basic_strategy(game_state.player_hand, dealer_upcard)
+    correct_action = simplify_action(basic_strategy(game_state.player_hand, dealer_upcard))
 
     # Format cards for display
     dealer_cards_str = ", ".join(str(c) for c in game_state.dealer_hand.cards)

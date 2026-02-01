@@ -122,6 +122,7 @@ class TableReading(BaseModel):
     chips: list[Chip] = []
 
 
+<<<<<<< HEAD
 # Static chip layout for testing
 TEST_CHIPS: list[Chip] = [
     Chip(color=ChipColor.PINK, position=ChipPosition.LEFT),
@@ -170,6 +171,23 @@ _READINGS = cycle(
         ),
     ]
 )
+=======
+class ChipVerification(BaseModel):
+    """Result of chip placement verification."""
+    chip_in_betting_area: bool
+    chip_visible: bool
+    failure_description: str | None = None
+
+
+def capture_frame(camera_index: int = 0) -> np.ndarray:
+    """Capture a single frame from camera"""
+    cap = cv2.VideoCapture(camera_index)
+    ret, frame = cap.read()
+    cap.release()
+    if not ret:
+        raise RuntimeError("Failed to capture frame")
+    return frame
+>>>>>>> d05b97f (Zingers)
 
 
 def capture_frame(camera_index: int = 0) -> Optional[np.ndarray]:
@@ -179,6 +197,7 @@ def capture_frame(camera_index: int = 0) -> Optional[np.ndarray]:
     return None
 
 
+<<<<<<< HEAD
 def read_cards(frame: Optional[np.ndarray]) -> TableReading:
     """
     Return the next deterministic TableReading each time this is called.
@@ -186,3 +205,123 @@ def read_cards(frame: Optional[np.ndarray]) -> TableReading:
     reading = next(_READINGS)
     # Return a deep copy so callers cannot mutate the shared template.
     return reading.model_copy(deep=True)
+=======
+def read_cards(frame: np.ndarray) -> TableReading:
+    """Use Gemini to identify cards on table"""
+    b64_image = frame_to_base64(frame)
+
+    client = get_client()
+    response = client.chat.completions.create(
+        model="google/gemini-2.0-flash-lite-001",
+        messages=[
+            {
+                "role": "system",
+                "content": """You are a card recognition system for blackjack.
+Analyze the image and identify all playing cards visible.
+
+The table layout:
+- DEALER cards are at the TOP of the image
+- PLAYER cards are at the BOTTOM of the image
+- Face-down cards appear as card backs (solid color/pattern)
+
+Respond in this exact JSON format:
+{
+    "dealer_cards": [{"rank": "A", "suit": "spades"}, ...],
+    "dealer_hole_hidden": true/false,
+    "player_cards": [{"rank": "10", "suit": "hearts"}, ...]
+}
+
+Ranks: 2,3,4,5,6,7,8,9,10,J,Q,K,A
+Suits: hearts, diamonds, clubs, spades
+
+If you see a face-down card in dealer's hand, set dealer_hole_hidden to true and only include the visible dealer card."""
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{b64_image}"
+                        }
+                    },
+                    {
+                        "type": "text",
+                        "text": "What cards are on the blackjack table? Dealer cards at top, player cards at bottom."
+                    }
+                ]
+            }
+        ],
+        response_format={"type": "json_object"},
+        max_tokens=500,
+    )
+
+    data = json.loads(response.choices[0].message.content)
+
+    def parse_card(c: dict) -> Card:
+        # Normalize suit (handle "diamond" vs "diamonds", etc.)
+        suit_str = c["suit"].lower()
+        if not suit_str.endswith("s"):
+            suit_str += "s"
+        return Card(
+            rank=Rank(c["rank"]),
+            suit=Suit(suit_str)
+        )
+
+    return TableReading(
+        dealer_cards=[parse_card(c) for c in data.get("dealer_cards", [])],
+        dealer_hole_hidden=data.get("dealer_hole_hidden", True),
+        player_cards=[parse_card(c) for c in data.get("player_cards", [])]
+    )
+
+
+def verify_chip_placement(frame: np.ndarray) -> ChipVerification:
+    """
+    Check if the yellow $50 chip made it to the betting area.
+    Called immediately after robot finishes betting action.
+    """
+    b64_image = frame_to_base64(frame)
+
+    client = get_client()
+    response = client.chat.completions.create(
+        model="google/gemini-2.0-flash-lite-001",
+        messages=[
+            {
+                "role": "system",
+                "content": """You are verifying a robot's chip placement in blackjack.
+Look for a YELLOW $50 chip. Check if it's in the betting circle/area.
+
+Respond in this exact JSON format:
+{
+    "chip_in_betting_area": true/false,
+    "chip_visible": true/false,
+    "failure_description": "description if failed, null if success"
+}
+
+Examples of failures:
+- Chip fell off table
+- Chip is outside the betting area
+- Chip knocked over other chips
+- Cannot see the yellow chip anywhere"""
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{b64_image}"}
+                    },
+                    {
+                        "type": "text",
+                        "text": "Did the yellow $50 chip make it to the betting area?"
+                    }
+                ]
+            }
+        ],
+        response_format={"type": "json_object"},
+        max_tokens=200,
+    )
+
+    data = json.loads(response.choices[0].message.content)
+    return ChipVerification(**data)
+>>>>>>> d05b97f (Zingers)

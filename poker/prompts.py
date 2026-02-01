@@ -33,4 +33,8 @@ def format_game_state(dealer_cards: str, player_cards: str, player_value: int, d
 Dealer showing: {dealer_cards}
 Your cards: {player_cards} (total: {player_value})
 
+IMPORTANT: You MUST reference these EXACT cards in your response. Do NOT make up different cards.
+Dealer has: {dealer_cards}
+You have: {player_cards} which totals {player_value}
+
 What's your move?"""
