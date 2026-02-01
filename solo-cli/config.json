@@ -1,0 +1,168 @@
+{
+    "robot_type": "so101",
+    "leader_port": "/dev/tty.usbmodem5A7A0187121",
+    "leader_calibrated": true,
+    "leader_id": "so101_leader",
+    "lerobot": {
+        "known_ids_by_type": {
+            "so101": {
+                "leaders": [
+                    "so101_leader"
+                ],
+                "followers": [
+                    "so101_follower"
+                ]
+            }
+        },
+        "known_leader_ids": [
+            "so101_leader"
+        ],
+        "known_follower_ids": [
+            "so101_follower"
+        ],
+        "mode_configs": {
+            "teleop": {
+                "leader_port": "/dev/tty.usbmodem5A7A0187121",
+                "follower_port": "/dev/tty.usbmodem5AB01828691",
+                "robot_type": "so101",
+                "camera_config": {
+                    "enabled": true,
+                    "cameras": [
+                        {
+                            "camera_id": 0,
+                            "camera_type": "OpenCV",
+                            "angle": "top",
+                            "camera_info": {
+                                "name": "OpenCV Camera @ 0",
+                                "type": "OpenCV",
+                                "id": 0,
+                                "backend_api": "AVFOUNDATION",
+                                "default_stream_profile": {
+                                    "format": 16.0,
+                                    "fourcc": "\u0000\u0000\u0000\u0000",
+                                    "width": 1920,
+                                    "height": 1080,
+                                    "fps": 30.00003
+                                }
+                            }
+                        }
+                    ]
+                },
+                "use_cameras": true,
+                "leader_id": "so101_leader",
+                "follower_id": "so101_follower"
+            },
+            "recording": {
+                "robot_type": "so101",
+                "leader_port": "/dev/tty.usbmodem5A7A0187121",
+                "follower_port": "/dev/tty.usbmodem5AB01828691",
+                "camera_config": {
+                    "enabled": true,
+                    "cameras": [
+                        {
+                            "camera_id": 0,
+                            "camera_type": "OpenCV",
+                            "angle": "side",
+                            "camera_info": {
+                                "name": "OpenCV Camera @ 0",
+                                "type": "OpenCV",
+                                "id": 0,
+                                "backend_api": "AVFOUNDATION",
+                                "default_stream_profile": {
+                                    "format": 16.0,
+                                    "fourcc": "\u0000\u0000\u0000\u0000",
+                                    "width": 1920,
+                                    "height": 1080,
+                                    "fps": 30.00003
+                                }
+                            }
+                        },
+                        {
+                            "camera_id": 1,
+                            "camera_type": "OpenCV",
+                            "angle": "top",
+                            "camera_info": {
+                                "name": "OpenCV Camera @ 1",
+                                "type": "OpenCV",
+                                "id": 1,
+                                "backend_api": "AVFOUNDATION",
+                                "default_stream_profile": {
+                                    "format": 16.0,
+                                    "fourcc": "\u0000\u0000\u0000\u0000",
+                                    "width": 1920,
+                                    "height": 1080,
+                                    "fps": 5.0
+                                }
+                            }
+                        }
+                    ]
+                },
+                "leader_id": "so101_leader",
+                "follower_id": "so101_follower",
+                "dataset_repo_id": "ariav2002/hack",
+                "task_description": "Pick up Chips",
+                "episode_time": 15.0,
+                "num_episodes": 30,
+                "fps": 30,
+                "push_to_hub": true,
+                "should_resume": false
+            },
+            "inference": {
+                "robot_type": "so101",
+                "leader_port": null,
+                "leader_id": null,
+                "follower_id": "so101_follower",
+                "follower_port": "/dev/tty.usbmodem5AB01828691",
+                "camera_config": {
+                    "enabled": true,
+                    "cameras": [
+                        {
+                            "camera_id": 0,
+                            "camera_type": "OpenCV",
+                            "angle": "side",
+                            "camera_info": {
+                                "name": "OpenCV Camera @ 0",
+                                "type": "OpenCV",
+                                "id": 0,
+                                "backend_api": "AVFOUNDATION",
+                                "default_stream_profile": {
+                                    "format": 16.0,
+                                    "fourcc": "\u0000\u0000\u0000\u0000",
+                                    "width": 1920,
+                                    "height": 1080,
+                                    "fps": 30.00003
+                                }
+                            }
+                        },
+                        {
+                            "camera_id": 1,
+                            "camera_type": "OpenCV",
+                            "angle": "front",
+                            "camera_info": {
+                                "name": "OpenCV Camera @ 1",
+                                "type": "OpenCV",
+                                "id": 1,
+                                "backend_api": "AVFOUNDATION",
+                                "default_stream_profile": {
+                                    "format": 16.0,
+                                    "fourcc": "\u0000\u0000\u0000\u0000",
+                                    "width": 1920,
+                                    "height": 1080,
+                                    "fps": 24.000038
+                                }
+                            }
+                        }
+                    ]
+                },
+                "policy_path": "lerobot/smolvla_base",
+                "task_description": "Test",
+                "inference_time": 60.0,
+                "fps": 30,
+                "use_teleoperation": false
+            }
+        }
+    },
+    "follower_port": "/dev/tty.usbmodem5AB01828691",
+    "follower_calibrated": true,
+    "follower_id": "so101_follower"
+}
